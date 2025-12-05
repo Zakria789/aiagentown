@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Voice Call Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 500px;
+            width: 100%;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-weight: 500;
+            text-align: center;
+        }
+        
+        .status.disconnected {
+            background: #fee;
+            color: #c33;
+        }
+        
+        .status.connecting {
+            background: #ffeaa7;
+            color: #d63031;
+        }
+        
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status.in-call {
+            background: #cce5ff;
+            color: #004085;
+        }
+        
+        button {
+            width: 100%;
+            padding: 18px;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 15px;
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-start {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-start:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-end {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .btn-end:hover:not(:disabled) {
+            background: #c82333;
+        }
+        
+        .info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .info strong {
+            color: #333;
+        }
+        
+        .logs {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            margin-top: 20px;
+        }
+        
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 3px 0;
+        }
+        
+        .log-info { color: #4fc3f7; }
+        .log-success { color: #81c784; }
+        .log-error { color: #e57373; }
+        .log-warning { color: #ffb74d; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 AI Voice Call Test</h1>
+        <p class="subtitle">Test your HumeAI voice agent</p>
+        
+        <div id="status" class="status disconnected">
+            ❌ Disconnected
+        </div>
+        
+        <button id="startBtn" class="btn-start" onclick="startCall()">
+            📞 Start Call
+        </button>
+        
+        <button id="endBtn" class="btn-end" onclick="endCall()" disabled>
+            📴 End Call
+        </button>
+        
+        <div class="info">
+            <strong>How to test:</strong><br>
+            1. Click "Start Call"<br>
+            2. Allow microphone access<br>
+            3. Speak into your phone<br>
+            4. AI will respond with voice<br>
+            5. Click "End Call" when done
+        </div>
+        
+        <div class="logs" id="logs"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let audioContext = null;
+        let processor = null;
+        let stream = null;
+        let isCallActive = false;
+        
+        const BACKEND_URL = 'ws://localhost:8000/ws/webrtc-audio';
+        const SESSION_ID = Date.now().toString();
+        
+        function log(message, type = 'info') {
+            const logsDiv = document.getElementById('logs');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logsDiv.appendChild(entry);
+            logsDiv.scrollTop = logsDiv.scrollHeight;
+            console.log(message);
+        }
+        
+        function updateStatus(text, className) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = text;
+            statusDiv.className = `status ${className}`;
+        }
+        
+        async function startCall() {
+            try {
+                log('🚀 Starting call...', 'info');
+                updateStatus('🔄 Connecting...', 'connecting');
+                
+                // Disable start button
+                document.getElementById('startBtn').disabled = true;
+                
+                // Connect WebSocket
+                log('🔌 Connecting to backend...', 'info');
+                ws = new WebSocket(BACKEND_URL);
+                
+                ws.onopen = () => {
+                    log('✅ WebSocket connected!', 'success');
+                    
+                    // Send init
+                    ws.send(JSON.stringify({
+                        type: 'init',
+                        session_id: SESSION_ID,
+                        timestamp: Date.now()
+                    }));
+                    log('📤 Sent init message', 'info');
+                    
+                    // Start audio capture
+                    startAudioCapture();
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        if (data.type === 'ready') {
+                            log('✅ Bridge ready', 'success');
+                        } else if (data.type === 'audio_response') {
+                            log('🔊 Received AI audio response', 'success');
+                            playAudioResponse(data.data);
+                        } else if (data.type === 'transcript') {
+                            log(`💬 ${data.speaker}: ${data.text}`, 'info');
+                        }
+                    } catch (e) {
+                        log(`❌ Error parsing message: ${e}`, 'error');
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    log('❌ WebSocket error', 'error');
+                    updateStatus('❌ Connection Error', 'disconnected');
+                };
+                
+                ws.onclose = () => {
+                    log('🔌 WebSocket closed', 'warning');
+                    if (isCallActive) {
+                        endCall();
+                    }
+                };
+                
+            } catch (error) {
+                log(`❌ Start call failed: ${error}`, 'error');
+                updateStatus('❌ Failed to start', 'disconnected');
+                document.getElementById('startBtn').disabled = false;
+            }
+        }
+        
+        async function startAudioCapture() {
+            try {
+                log('🎤 Requesting microphone access...', 'info');
+                
+                // Get user media
+                stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 16000,
+                        channelCount: 1
+                    }
+                });
+                
+                log('✅ Microphone access granted!', 'success');
+                
+                // Create audio context
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                let chunkCount = 0;
+                
+                processor.onaudioprocess = (e) => {
+                    if (!isCallActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+                    
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    
+                    // Convert to Int16
+                    const int16 = new Int16Array(inputData.length);
+                    for (let i = 0; i < inputData.length; i++) {
+                        const s = Math.max(-1, Math.min(1, inputData[i]));
+                        int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+                    
+                    // Encode to base64
+                    const bytes = new Uint8Array(int16.buffer);
+                    const base64 = btoa(String.fromCharCode(...bytes));
+                    
+                    // Send to backend
+                    ws.send(JSON.stringify({
+                        type: 'audio',
+                        data: base64,
+                        timestamp: Date.now()
+                    }));
+                    
+                    chunkCount++;
+                    if (chunkCount % 100 === 0) {
+                        log(`📊 Sent ${chunkCount} audio chunks`, 'info');
+                    }
+                };
+                
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                // Send call_start event
+                ws.send(JSON.stringify({
+                    type: 'call_start',
+                    session_id: SESSION_ID,
+                    timestamp: Date.now()
+                }));
+                
+                log('📞 Call started - AI is listening...', 'success');
+                updateStatus('📞 Call Active - Speak now!', 'in-call');
+                isCallActive = true;
+                
+                // Enable end button
+                document.getElementById('endBtn').disabled = false;
+                
+            } catch (error) {
+                log(`❌ Audio capture failed: ${error}`, 'error');
+                updateStatus('❌ Microphone Error', 'disconnected');
+                document.getElementById('startBtn').disabled = false;
+            }
+        }
+        
+        function playAudioResponse(base64Audio) {
+            try {
+                const binary = atob(base64Audio);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) {
+                    bytes[i] = binary.charCodeAt(i);
+                }
+                
+                const blob = new Blob([bytes], { type: 'audio/wav' });
+                const url = URL.createObjectURL(blob);
+                const audio = new Audio(url);
+                
+                audio.play().catch(err => {
+                    log(`❌ Failed to play audio: ${err}`, 'error');
+                });
+                
+                audio.onended = () => {
+                    URL.revokeObjectURL(url);
+                };
+                
+            } catch (error) {
+                log(`❌ Error playing audio: ${error}`, 'error');
+            }
+        }
+        
+        function endCall() {
+            try {
+                log('📴 Ending call...', 'warning');
+                
+                isCallActive = false;
+                
+                // Stop audio
+                if (processor) {
+                    processor.disconnect();
+                    processor = null;
+                }
+                
+                if (audioContext) {
+                    audioContext.close();
+                    audioContext = null;
+                }
+                
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                    stream = null;
+                }
+                
+                // Send call_end
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'call_end',
+                        session_id: SESSION_ID,
+                        timestamp: Date.now()
+                    }));
+                }
+                
+                // Close WebSocket
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+                
+                log('✅ Call ended', 'success');
+                updateStatus('❌ Disconnected', 'disconnected');
+                
+                // Reset buttons
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('endBtn').disabled = true;
+                
+            } catch (error) {
+                log(`❌ Error ending call: ${error}`, 'error');
+            }
+        }
+        
+        // Initial log
+        log('🎯 Test page loaded', 'success');
+        log('📱 Make sure backend server is running on port 8000', 'warning');
+    </script>
+</body>
+</html>
