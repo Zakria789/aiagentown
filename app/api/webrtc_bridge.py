@@ -100,6 +100,27 @@ class WebRTCBridgeSession:
                 data = json.loads(message)
                 msg_type = data.get("type")
                 
+                # Handle call end event
+                if msg_type == "call_end":
+                    logger.info("="*60)
+                    logger.info("📴 CALL ENDED - Closing HumeAI connection")
+                    logger.info("="*60)
+                    self.call_active = False
+                    
+                    # Close HumeAI WebSocket
+                    if self.hume_ws:
+                        await self.hume_ws.close()
+                        self.hume_ws = None
+                        self.hume_connected = False
+                        logger.info("✅ HumeAI connection closed")
+                    
+                    # Notify browser
+                    await self.client_ws.send_text(json.dumps({
+                        "type": "hume_disconnected",
+                        "message": "HumeAI connection closed - call ended"
+                    }))
+                    continue
+                
                 # Handle both 'audio' and 'audio_input' from browser
                 if msg_type in ["audio", "audio_input"]:
                     audio_b64 = data.get("data")
