@@ -397,7 +397,7 @@ class CallToolsMonitorService:
                     
                     const stream = new MediaStream([activeTrack]);
                     window.__callState.audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                        sampleRate: 16000
+                        sampleRate: 48000
                     });
                     
                     const source = window.__callState.audioContext.createMediaStreamSource(stream);
@@ -507,7 +507,7 @@ class CallToolsMonitorService:
                     
                     if (!window.__callState.audioContext) {
                         window.__callState.audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                            sampleRate: 16000
+                            sampleRate: 48000
                         });
                     }
                     
@@ -524,7 +524,7 @@ class CallToolsMonitorService:
                         float32Array[i] = int16Array[i] / (int16Array[i] < 0 ? 0x8000 : 0x7FFF);
                     }
                     
-                    const audioBuffer = window.__callState.audioContext.createBuffer(1, float32Array.length, 16000);
+                    const audioBuffer = window.__callState.audioContext.createBuffer(1, float32Array.length, 48000);
                     audioBuffer.getChannelData(0).set(float32Array);
                     
                     const source = window.__callState.audioContext.createBufferSource();
@@ -560,95 +560,6 @@ class CallToolsMonitorService:
         
         self.driver.execute_script(js_code)
         logger.info("✅ Audio bridge script injected")
-    
-    def select_disposition(self, disposition_type: str = "Lead"):
-        """
-        Select disposition after call ends
-        disposition_type options: Lead, Customer Hang Up, No Contact, Not Interested, etc.
-        """
-        try:
-            logger.info(f"🎯 Selecting disposition: {disposition_type}")
-            
-            # Wait for disposition dialog to appear
-            wait = WebDriverWait(self.driver, 10)
-            
-            # Look for disposition buttons
-            disposition_script = f"""
-                const buttons = Array.from(document.querySelectorAll('button'));
-                const targetButton = buttons.find(btn => 
-                    btn.textContent.includes('{disposition_type}')
-                );
-                if (targetButton) {{
-                    targetButton.click();
-                    return true;
-                }}
-                return false;
-            """
-            
-            result = self.driver.execute_script(disposition_script)
-            
-            if result:
-                logger.info(f"✅ Disposition '{disposition_type}' selected")
-                return True
-            else:
-                logger.warning(f"⚠️ Disposition button '{disposition_type}' not found")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Failed to select disposition: {e}")
-            return False
-    
-    def set_status_available(self):
-        """Set agent status to Available for next call"""
-        try:
-            logger.info("🟢 Setting status to Available...")
-            
-            # Look for status dropdown/button
-            status_script = """
-                // Look for status selector
-                const statusElements = document.querySelectorAll('[class*="status"], [id*="status"]');
-                
-                for (let elem of statusElements) {
-                    if (elem.tagName === 'SELECT') {
-                        // Dropdown
-                        const options = Array.from(elem.options);
-                        const availOption = options.find(opt => 
-                            opt.text.includes('Available') || opt.value.includes('available')
-                        );
-                        if (availOption) {
-                            elem.value = availOption.value;
-                            elem.dispatchEvent(new Event('change'));
-                            return 'dropdown';
-                        }
-                    }
-                }
-                
-                // Look for Available button
-                const buttons = Array.from(document.querySelectorAll('button'));
-                const availButton = buttons.find(btn => 
-                    btn.textContent.includes('Available') || 
-                    btn.textContent.includes('Post Call')
-                );
-                if (availButton) {
-                    availButton.click();
-                    return 'button';
-                }
-                
-                return null;
-            """
-            
-            result = self.driver.execute_script(status_script)
-            
-            if result:
-                logger.info(f"✅ Status set to Available (via {result})")
-                return True
-            else:
-                logger.warning("⚠️ Status change element not found - may need manual update")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Failed to set status: {e}")
-            return False
     
     async def monitor_calls(self):
         """Monitor for call events automatically"""
@@ -686,33 +597,6 @@ class CallToolsMonitorService:
                             logger.info("📴 CALL ENDED")
                             logger.info(f"   Total frames: {call_state['frameCount']}")
                             logger.info("="*60)
-                            
-                            # Send call_end event to WebSocket
-                            try:
-                                self.driver.execute_script("""
-                                    if (window.__callState && window.__callState.ws && 
-                                        window.__callState.ws.readyState === WebSocket.OPEN) {
-                                        window.__callState.ws.send(JSON.stringify({
-                                            type: 'call_end',
-                                            timestamp: Date.now()
-                                        }));
-                                        console.log('📴 Call end event sent to backend');
-                                    }
-                                """)
-                                logger.info("✅ Call end event sent to backend")
-                            except Exception as e:
-                                logger.error(f"Failed to send call_end event: {e}")
-                            
-                            # Wait for disposition dialog to appear
-                            await asyncio.sleep(2)
-                            
-                            # Auto-select disposition (default: Lead)
-                            # You can change this based on AI analysis
-                            self.select_disposition("Lead")
-                            
-                            # Wait a moment then set status to Available
-                            await asyncio.sleep(1)
-                            self.set_status_available()
                         
                         last_call_state = current_state
                 

@@ -90,15 +90,15 @@ class HumeConfigService:
             config_payload = {
                 "evi_version": "3",  # Latest version
                 "name": config_name,
-                "version_description": "General settings",  # Description field
+                "version_description": "Fast response with natural speech",  # Description field
                 "voice": {
                     "id": voice_id,
                     "provider": "HUME_AI"
                 },
                 "language_model": {
-                    "model_provider": "HUME_AI",
-                    "model_resource": "hume-evi-3-web-search",  # Second option: Hume EVI 3 SpeechLLM with Web Search
-                    "temperature": 1.0
+                    "model_provider": "ANTHROPIC",
+                    "model_resource": "claude-3-5-sonnet-20241022",  # Fastest and most capable model
+                    "temperature": 0.7  # Lower temperature for faster responses
                 },
                 "ellm_model": None,
                 "prompt": {
