@@ -98,16 +98,55 @@ class CallToolsMonitorService:
             username_field.send_keys(self.username)
             time.sleep(0.5)
             
-            # Find password field
-            password_field = self.driver.find_element(By.NAME, "password")
+            # Find password field with multiple strategies
+            password_selectors = [
+                (By.NAME, "password"),
+                (By.ID, "password"),
+                (By.XPATH, "//input[@type='password']"),
+                (By.CSS_SELECTOR, "input[type='password']")
+            ]
+            
+            password_field = None
+            for by, selector in password_selectors:
+                try:
+                    password_field = wait.until(EC.presence_of_element_located((by, selector)))
+                    break
+                except:
+                    continue
+            
+            if not password_field:
+                raise Exception("Password field not found")
+            
             password_field.clear()
             password_field.send_keys(self.password)
             time.sleep(0.5)
             
-            # Click login button
-            login_button = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Login')]")
+            # Click login button with multiple strategies
+            login_selectors = [
+                (By.XPATH, "//button[contains(text(), 'Login')]"),
+                (By.XPATH, "//button[@type='submit']"),
+                (By.XPATH, "//input[@type='submit']"),
+                (By.CSS_SELECTOR, "button[type='submit']"),
+                (By.XPATH, "//button[contains(@class, 'login')]"),
+                (By.XPATH, "//button[contains(@class, 'submit')]"),
+                (By.XPATH, "//a[contains(text(), 'Login')]"),
+                (By.XPATH, "//*[contains(text(), 'Sign in')]"),
+                (By.XPATH, "//button")
+            ]
+            
+            login_button = None
+            for by, selector in login_selectors:
+                try:
+                    login_button = wait.until(EC.element_to_be_clickable((by, selector)))
+                    break
+                except:
+                    continue
+            
+            if not login_button:
+                raise Exception("Login button not found")
+            
             login_button.click()
-            time.sleep(2)
+            time.sleep(3)
             
             logger.info("✅ LOGIN SUCCESSFUL")
             
