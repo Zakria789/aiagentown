@@ -72,3 +72,4 @@ loguru>=0.7
 # Task Queue (Optional)
 # =========================
 celery>=5.3
+email-validator>=2.1.0
