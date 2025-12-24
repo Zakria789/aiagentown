@@ -73,3 +73,4 @@ loguru>=0.7
 # =========================
 celery>=5.3
 email-validator>=2.1.0
+apscheduler==3.10.4
