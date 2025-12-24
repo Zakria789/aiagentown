@@ -24,6 +24,7 @@ class WebRTCBridgeSession:
         self.running = False
         self.call_active = False  # Track if actual call is in progress
         self.hume_connected = False  # Track HumeAI connection state
+        self.listener_task = None  # Track HumeAI listener task
         
     async def connect_humeai(self):
         """Connect to HumeAI"""
@@ -47,7 +48,7 @@ class WebRTCBridgeSession:
                 "config_id": settings.HUME_CONFIG_ID,
                 "audio": {
                     "encoding": "linear16",
-                    "sample_rate": 16000,
+                    "sample_rate": 48000,
                     "channels": 1
                 }
             }
@@ -100,27 +101,6 @@ class WebRTCBridgeSession:
                 data = json.loads(message)
                 msg_type = data.get("type")
                 
-                # Handle call end event
-                if msg_type == "call_end":
-                    logger.info("="*60)
-                    logger.info("📴 CALL ENDED - Closing HumeAI connection")
-                    logger.info("="*60)
-                    self.call_active = False
-                    
-                    # Close HumeAI WebSocket
-                    if self.hume_ws:
-                        await self.hume_ws.close()
-                        self.hume_ws = None
-                        self.hume_connected = False
-                        logger.info("✅ HumeAI connection closed")
-                    
-                    # Notify browser
-                    await self.client_ws.send_text(json.dumps({
-                        "type": "hume_disconnected",
-                        "message": "HumeAI connection closed - call ended"
-                    }))
-                    continue
-                
                 # Handle both 'audio' and 'audio_input' from browser
                 if msg_type in ["audio", "audio_input"]:
                     audio_b64 = data.get("data")
@@ -169,18 +149,20 @@ class WebRTCBridgeSession:
                             self.call_active = True
                             
                             # Start HumeAI listener task with error handling
-                            listener_task = asyncio.create_task(self.forward_from_humeai())
+                            self.listener_task = asyncio.create_task(self.forward_from_humeai())
                             
                             # Add done callback to catch any errors
                             def listener_done_callback(task):
                                 try:
                                     task.result()
+                                except asyncio.CancelledError:
+                                    logger.info("✅ HumeAI listener task cancelled (call ended)")
                                 except Exception as e:
                                     logger.error(f"❌ HumeAI listener task failed: {e}")
                                     import traceback
                                     logger.error(traceback.format_exc())
                             
-                            listener_task.add_done_callback(listener_done_callback)
+                            self.listener_task.add_done_callback(listener_done_callback)
                             
                             logger.info("✅ HumeAI connected and ready for audio!")
                         else:
@@ -195,30 +177,63 @@ class WebRTCBridgeSession:
                 elif msg_type == "call_end":
                     # Call ended
                     logger.info("="*60)
-                    logger.info("📴 CALL ENDED - Stopping audio streaming and closing HumeAI")
+                    logger.info("📴 CALL ENDED - Disconnecting HumeAI immediately")
                     logger.info("="*60)
                     self.call_active = False
                     self.running = False  # Stop the session
                     
-                    # Close HumeAI connection
-                    if self.hume_ws:
+                    # Cancel HumeAI listener task first
+                    if self.listener_task and not self.listener_task.done():
+                        logger.info("🛑 Cancelling HumeAI listener task...")
+                        self.listener_task.cancel()
                         try:
-                            await self.hume_ws.close()
-                            logger.info("✅ HumeAI WebSocket closed")
+                            await self.listener_task
+                        except asyncio.CancelledError:
+                            logger.info("✅ Listener task cancelled")
                         except Exception as e:
-                            logger.error(f"Error closing HumeAI: {e}")
+                            logger.error(f"Error cancelling listener: {e}")
+                    
+                    # Close HumeAI WebSocket connection
+                    if self.hume_ws and not self.hume_ws.closed:
+                        try:
+                            # Send pause message first
+                            await self.hume_ws.send(json.dumps({
+                                "type": "pause_assistant_message"
+                            }))
+                            logger.info("📤 Sent pause_assistant_message to HumeAI")
+                            
+                            # Wait a tiny bit for message to send
+                            await asyncio.sleep(0.1)
+                            
+                            # Close the WebSocket with proper code
+                            await self.hume_ws.close(code=1000, reason="Call ended")
+                            logger.info("✅ HumeAI WebSocket closed successfully")
+                        except Exception as e:
+                            logger.error(f"⚠️ Error during HumeAI close: {e}")
+                            # Force close
+                            try:
+                                if not self.hume_ws.closed:
+                                    await self.hume_ws.close()
+                            except:
+                                pass
                         finally:
                             self.hume_ws = None
                             self.hume_connected = False
+                            logger.info("✅ HumeAI fully disconnected and cleaned up")
                     
                     # Notify browser
                     try:
                         await self.client_ws.send_text(json.dumps({
                             "type": "call_end_ack",
-                            "message": "Call ended, resources cleaned up"
+                            "message": "Call ended, HumeAI disconnected"
                         }))
-                    except:
-                        pass
+                        logger.info("📤 Sent call_end_ack to browser")
+                    except Exception as e:
+                        logger.error(f"Error notifying browser: {e}")
+                    
+                    # Break the loop to exit immediately
+                    logger.info("🔚 Exiting main loop")
+                    break
                     
         except WebSocketDisconnect:
             logger.info("Browser disconnected")
@@ -360,13 +375,43 @@ class WebRTCBridgeSession:
         await self.forward_to_humeai()
     
     async def cleanup(self):
-        """Cleanup connections"""
+        """Cleanup connections - called when session ends"""
+        logger.info("🧹 Starting cleanup...")
         self.running = False
+        self.call_active = False
         
-        if self.hume_ws:
-            await self.hume_ws.close()
+        # Cancel listener task if still running
+        if self.listener_task and not self.listener_task.done():
+            logger.info("🛑 Cancelling listener task in cleanup...")
+            self.listener_task.cancel()
+            try:
+                await self.listener_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(f"Error cancelling listener in cleanup: {e}")
         
-        logger.info("✅ WebRTC bridge session closed")
+        # Close HumeAI WebSocket
+        if self.hume_ws and not self.hume_ws.closed:
+            try:
+                await self.hume_ws.send(json.dumps({
+                    "type": "pause_assistant_message"
+                }))
+                await asyncio.sleep(0.1)
+                await self.hume_ws.close(code=1000, reason="Session ended")
+                logger.info("✅ HumeAI disconnected in cleanup")
+            except Exception as e:
+                logger.error(f"⚠️ Error during HumeAI cleanup: {e}")
+                try:
+                    if not self.hume_ws.closed:
+                        await self.hume_ws.close()
+                except:
+                    pass
+            finally:
+                self.hume_ws = None
+                self.hume_connected = False
+        
+        logger.info("✅ WebRTC bridge session fully cleaned up")
 
 
 @router.websocket("/webrtc-audio")
